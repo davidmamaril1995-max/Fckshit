@@ -1,11 +1,7 @@
-name: Build APK
+name: Build APK From ZIP
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 jobs:
   build:
@@ -15,14 +11,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Extract ZIP Files
+        run: |
+          mkdir extracted
+
+          for file in *.zip
+          do
+            echo "Extracting $file"
+            unzip -oq "$file" -d extracted
+          done
+
+      - name: Show Extracted Files
+        run: |
+          find extracted -type f | head -100
+
+      - name: Detect Android Project
+        run: |
+          PROJECT=$(find extracted -name "settings.gradle.kts" | head -1)
+
+          if [ -z "$PROJECT" ]; then
+            echo "Android project not found"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT")
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
 
       - name: Generate Debug Keystore
         run: |
@@ -39,17 +62,31 @@ jobs:
 
       - name: Copy Keystore
         run: |
-          cp debug.keystore .
+          cp debug.keystore "$PROJECT_DIR/"
 
-      - name: Make Gradle Executable
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate Wrapper If Missing
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper
+          fi
+
+      - name: Make Executable
+        working-directory: ${{ env.PROJECT_DIR }}
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: apk
           path: |
-            app/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/release/*.apk
